@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: user
+      DATABASE_PASSWORD: pass
+      DATABASE_NAME: orders
+      KAFKA_BROKER: kafka:9092
+      ELASTICSEARCH_NODE: http://elasticsearch:9200
+    depends_on:
+      - postgres
+      - kafka
+      - elasticsearch
+    volumes:
+      - app_data:/app/data
+      # Mount local source into the container for development so new files
+      # (e.g. tmp/kafka-consumer.js) are immediately visible without rebuilding.
+      # Warning: this will override files copied into the image under /app/order-management-system
+      # Use only in development.
+      - ./order-management-system:/app/order-management-system
+    command: ['node', 'scripts/wait-for-deps.js']
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: orders
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U user -d orders']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: bitnami/kafka:latest
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_BROKER_ID=1
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+    ports:
+      - 9092:9092
+    healthcheck:
+      test: ['CMD', 'bash', '-c', '(echo > /dev/tcp/localhost/9092)']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - '9200:9200'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -sS http://localhost:9200/_cluster/health | grep "status" || exit 1',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  app_data:
