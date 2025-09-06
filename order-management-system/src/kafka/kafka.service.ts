@@ -4,7 +4,7 @@ import {
   OnModuleDestroy,
   Logger,
 } from '@nestjs/common';
-import { Kafka, Producer, Partitioners } from 'kafkajs';
+import { Kafka, Producer } from 'kafkajs';
 import { join } from 'path';
 import { promises as fsp } from 'fs';
 import * as fs from 'fs';
@@ -21,7 +21,7 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   private reconnecting = false;
   private queueFilePath: string;
   private queueLogPath: string;
-  // milliseconds to wait for a producer.send before treating it as failed
+  // milissegundos a aguardar por um producer.send antes de considerá-lo como falha
   private sendTimeoutMs = 5000;
 
   constructor() {
@@ -29,21 +29,27 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     this.kafka = new Kafka({
       clientId: 'orders-app',
       brokers: this.brokers,
-      // keep legacy partitioner to avoid partitioning warnings if needed
-      // createPartitioner: Partitioners.LegacyPartitioner,
     });
     this.producer = this.kafka.producer();
-    this.queueFilePath = join(process.cwd(), 'data', 'kafka-queue.json');
-    this.queueLogPath = join(process.cwd(), 'data', 'kafka-queue.log');
+
+    // DETECTA PASTA CORRETA PARA ARMAZENAR A FILA (robusto entre builds e bind-mounts)
+    const possibleSubdir = join(process.cwd(), 'order-management-system');
+    const baseDir = fs.existsSync(possibleSubdir)
+      ? possibleSubdir
+      : process.cwd();
+    const dataDir = join(baseDir, 'data');
+
+    this.queueFilePath = join(dataDir, 'kafka-queue.json');
+    this.queueLogPath = join(dataDir, 'kafka-queue.log');
   }
 
   async onModuleInit() {
-    // Ensure queue folder exists and load persisted messages, then start background connect attempts.
+    // Garante que a pasta de fila exista e carrega mensagens persistidas
     await this.ensureQueueStorage();
     await this.loadQueueFromDisk().catch((e) =>
       this.logger.warn(`Failed to load persisted Kafka queue: ${e}`),
     );
-    // Start background connect attempts but don't crash the app if Kafka is unavailable.
+    // Inicia tentativas de conexão em background mas não deixa a aplicação cair se o Kafka estiver indisponível.
     this.connectWithRetry();
   }
 
@@ -69,15 +75,15 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
         await this.producer.connect();
         this.producerConnected = true;
         this.logger.log('Connected to Kafka broker');
-        // flush queued messages
+        // esvazia mensagens enfileiradas
         await this.flushQueue();
-        this.reconnectDelay = 1000; // reset delay after success
+        this.reconnectDelay = 1000; // reseta delay após sucesso
       } catch (err) {
         this.producerConnected = false;
         this.logger.warn(
           `Failed to connect to Kafka broker (will retry): ${err}`,
         );
-        // exponential backoff with cap
+        // backoff exponencial com teto
         await new Promise((res) => setTimeout(res, this.reconnectDelay));
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
       }
@@ -97,18 +103,17 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
           topic: item.topic,
           messages: [{ value: JSON.stringify(item.payload) }],
         });
-        // remove from disk persistence if present (we'll snapshot after successful flush)
-        // no-op here; after full flush we'll compact the log
+        // remover da persistência em disco se presente (faremos snapshot após flush completo)
       } catch (err) {
         this.logger.error(
           `Failed to send queued message to topic ${item.topic}: ${err}`,
         );
-        // re-queue to memory and persist
+        // re-enfileira em memória e persiste
         this.messagesQueue.push(item);
         await this.persistQueueToDisk().catch(() => {});
       }
     }
-    // Compact log after attempting to flush all queued messages
+    // Compacta o log após tentar enviar todas as mensagens enfileiradas
     await this.compactQueueLog().catch((e) =>
       this.logger.warn(`Failed to compact queue log: ${e}`),
     );
@@ -119,24 +124,22 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
       `sendMessage called for topic=${topic}, producerConnected=${this.producerConnected}`,
     );
     if (!this.producerConnected) {
-      // Queue the message and ensure background reconnection is running
+      // Enfileira a mensagem e garante que as tentativas de reconexão em background estejam rodando
       this.logger.warn(
         `Kafka producer not connected, queueing message for topic ${topic}`,
       );
       const msg = { topic, payload };
       this.messagesQueue.push(msg);
       try {
-        // Use synchronous append here so the write happens immediately even if
-        // the caller does not await this async function (fire-and-forget).
         this.appendMessageToLogSync(msg);
       } catch (e) {
         this.logger.warn(`Failed to append queued message to log (sync): ${e}`);
-        // fallback to async append
+        // fallback para append assíncrono
         await this.appendMessageToLog(msg).catch((err) =>
           this.logger.warn(`Failed to append queued message to log: ${err}`),
         );
       }
-      // start reconnect attempts if not already running
+      // inicia tentativas de reconexão se ainda não estiver rodando
       this.connectWithRetry().catch((err) =>
         this.logger.error(`Reconnect error: ${err}`),
       );
@@ -144,13 +147,12 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      // use a send helper with timeout to avoid hanging when broker becomes unreachable
       await this.sendWithTimeout({ topic, payload }, this.sendTimeoutMs);
     } catch (err) {
       this.logger.error(
         `Error sending message to Kafka topic ${topic}: ${err}`,
       );
-      // on failure, queue the message and try to reconnect
+      // em caso de falha, enfileira a mensagem e tenta reconectar
       const msg = { topic, payload };
       this.messagesQueue.push(msg);
       this.logger.log(
@@ -187,12 +189,12 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     return Promise.race([sendPromise, timeoutPromise]);
   }
 
-  // persistence helpers
+  // helpers de persistência
   private async ensureQueueStorage() {
     try {
       const dir = join(process.cwd(), 'data');
-      await fs.mkdir(dir, { recursive: true });
-      // ensure file exists
+      await fsp.mkdir(dir, { recursive: true });
+      // garante que o arquivo exista
       await fsp.writeFile(this.queueFilePath, '[]', { flag: 'a' });
       await fsp.writeFile(this.queueLogPath, '', { flag: 'a' });
     } catch (e) {
@@ -202,7 +204,6 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
 
   private async loadQueueFromDisk() {
     try {
-      // First, load snapshot JSON if present
       try {
         const content = await fsp.readFile(this.queueFilePath, 'utf8');
         const arr = JSON.parse(content || '[]');
@@ -211,9 +212,9 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
           this.logger.log(`Loaded ${arr.length} messages from persisted queue`);
         }
       } catch (e) {
-        // ignore
+        // ignorar
       }
-      // Then, load append-only log (one JSON per line)
+      // Em seguida, carrega o log append-only
       try {
         const log = await fsp.readFile(this.queueLogPath, 'utf8');
         if (log) {
@@ -223,23 +224,23 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
               const obj = JSON.parse(line);
               this.messagesQueue.push(obj);
             } catch (e) {
-              // ignore malformed line
+              // ignora linha malformada
             }
           }
           if (lines.length)
             this.logger.log(`Loaded ${lines.length} messages from queue log`);
         }
       } catch (e) {
-        // ignore
+        // ignorar
       }
     } catch (e) {
-      // ignore parsing errors
+      // ignorar erros de parsing
     }
   }
 
   private async persistQueueToDisk() {
     try {
-      // snapshot current queue to JSON file
+      // grava snapshot da fila atual em arquivo JSON
       await fsp.writeFile(
         this.queueFilePath,
         JSON.stringify(this.messagesQueue, null, 2),
@@ -258,14 +259,14 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
       );
       if (idx >= 0) {
         arr.splice(idx, 1);
-        await fs.writeFile(this.queueFilePath, JSON.stringify(arr, null, 2));
+        await fsp.writeFile(this.queueFilePath, JSON.stringify(arr, null, 2));
       }
     } catch (e) {
-      // non-fatal
+      // não-fatal
     }
   }
 
-  // append-only helpers
+  // helpers de append-only
   private async appendMessageToLog(msg: { topic: string; payload: any }) {
     try {
       const line = JSON.stringify(msg) + '\n';
@@ -278,7 +279,7 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // synchronous append used to guarantee persistence in fire-and-forget scenarios
+  // append síncrono usado para garantir persistência em cenários fire-and-forget
   private appendMessageToLogSync(msg: { topic: string; payload: any }) {
     try {
       const line = JSON.stringify(msg) + '\n';
@@ -293,12 +294,12 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
 
   private async compactQueueLog() {
     try {
-      // snapshot current memory queue to json and truncate log
-      await fs.writeFile(
+      // grava snapshot da fila atual em JSON e trunca o log
+      await fsp.writeFile(
         this.queueFilePath,
         JSON.stringify(this.messagesQueue, null, 2),
       );
-      await fs.writeFile(this.queueLogPath, '');
+      await fsp.writeFile(this.queueLogPath, '');
     } catch (e) {
       this.logger.warn(`Failed to compact queue log: ${e}`);
     }

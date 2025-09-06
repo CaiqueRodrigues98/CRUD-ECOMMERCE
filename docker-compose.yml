@@ -19,11 +19,6 @@ services:
       - elasticsearch
     volumes:
       - app_data:/app/data
-      # Mount local source into the container for development so new files
-      # (e.g. tmp/kafka-consumer.js) are immediately visible without rebuilding.
-      # Warning: this will override files copied into the image under /app/order-management-system
-      # Use only in development.
-      - ./order-management-system:/app/order-management-system
     command: ['node', 'scripts/wait-for-deps.js']
 
   postgres:

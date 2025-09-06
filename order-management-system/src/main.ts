@@ -1,5 +1,4 @@
 // ensure global File exists for dependencies that expect it (undici)
-// @ts-ignore
 global.File = global.File || class {};
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -27,7 +26,7 @@ async function bootstrap() {
     console.error('Uncaught Exception:', err);
   });
 
-  await app.listen(process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
+  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+  await app.listen(port, '0.0.0.0');
 }
-
-void bootstrap();
+bootstrap();
