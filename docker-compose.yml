@@ -1,4 +1,3 @@
-
 services:
   app:
     build: .
@@ -8,7 +7,7 @@ services:
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_USER: user
-      DATABASE_PASSWORD: pass
+      DATABASE_PASSWORD: <placeholder>
       DATABASE_NAME: orders
       KAFKA_BROKER: kafka:9092
       ELASTICSEARCH_NODE: http://elasticsearch:9200
@@ -24,7 +23,7 @@ services:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
+      POSTGRES_PASSWORD: <placeholder>
       POSTGRES_DB: orders
     ports:
       - '5432:5432'

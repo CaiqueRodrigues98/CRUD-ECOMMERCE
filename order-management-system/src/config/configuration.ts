@@ -5,7 +5,7 @@ export default registerAs('config', () => ({
     host: process.env.POSTGRES_HOST || 'localhost',
     port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
     username: process.env.POSTGRES_USER || 'user',
-    password: process.env.POSTGRES_PASSWORD || 'password',
+    password: process.env.POSTGRES_PASSWORD || '<placeholder>',
     database: process.env.POSTGRES_DB || 'order_management',
   },
   kafka: {
