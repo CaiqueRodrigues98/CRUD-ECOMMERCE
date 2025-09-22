@@ -89,13 +89,3 @@ Os testes unitários estão implementados para os principais componentes da apli
 ```
 npm run test
 ```
-
-## Limitações e Melhorias Futuras
-
-- Implementar autenticação e autorização para acesso à API.
-- Adicionar suporte a múltiplos idiomas.
-- Melhorar a interface de busca com filtros mais avançados.
-
-## Contribuição
-
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull requests.
